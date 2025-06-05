@@ -614,20 +614,25 @@ class PaintEcran:
                 x, y = self.canvas_to_real(*obj.coords[0])
                 height = getattr(obj, "size_mm", 5)
                 fontname = getattr(obj, "font", "DejaVu Sans")
+                # Correction taille : conversion mm -> points
+                size_pt = height / 0.3528 * 0.564
                 try:
-                    fp = FontProperties(family=fontname, size=height)
-                    tp = TextPath((0, 0), obj.text, prop=fp, size=height)
-                    # Calcule la bounding box globale
-                    all_pts = np.concatenate([np.array(poly) * 0.3528 for poly in tp.to_polygons()])
+                    fp = FontProperties(family=fontname, size=size_pt)
+                    tp = TextPath((0, 0), obj.text, prop=fp, size=size_pt)
+                    all_pts = np.concatenate([np.array(poly) for poly in tp.to_polygons()])
                     min_x = np.min(all_pts[:, 0])
+                    max_y = np.max(all_pts[:, 1])
                     min_y = np.min(all_pts[:, 1])
-                    # Décale chaque polygone pour que le coin haut-gauche soit à (0,0)
+                    bbox_height = max_y - min_y
                     for poly in tp.to_polygons():
-                        poly = np.array(poly) * 0.3528
+                        poly = np.array(poly)
                         poly[:, 0] -= min_x
-                        poly[:, 1] -= min_y
-                        poly[:, 0] += x + offset_x
-                        poly[:, 1] += y + offset_y
+                        poly[:, 1] -= max_y
+                        poly[:, 1] -= bbox_height * 0.23 # Ajuste ce facteur si besoin
+                        # Décalage vertical fixe supplémentaire pour descendre le texte
+                        #poly[:, 1] += 2   Décale de 2 mm vers le bas (ajuste cette valeur si besoin)
+                        poly[:, 0] = poly[:, 0] * 0.3528 + x + offset_x
+                        poly[:, 1] = poly[:, 1] * 0.3528 + y + offset_y
                         msp.add_lwpolyline([tuple(pt) for pt in poly], close=True)
                 except Exception as e:
                     msp.add_text(obj.text, dxfattribs={"height": height, "insert": (x + offset_x, y + offset_y)})
