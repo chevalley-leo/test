@@ -82,7 +82,7 @@ class PaintEcran:
             ("rectangle", "Rectangle"),
             ("circle", "Cercle"),
             ("text", "Texte"),
-            ("select", "Sélection")
+            ("select", "Selection")
         ]
         for tool, label in tool_labels:
             tk.Radiobutton(tools_frame, text=label, variable=self.tool_mode, value=tool, **radio_style).pack(side=tk.LEFT, padx=10, pady=5)
