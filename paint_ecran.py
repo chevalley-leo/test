@@ -1,4 +1,3 @@
-print("Script lancé")
 import tkinter as tk
 from tkinter import simpledialog, messagebox
 import ezdxf
@@ -7,11 +6,16 @@ import math
 from matplotlib.textpath import TextPath
 from matplotlib.font_manager import FontProperties
 import numpy as np
+import socket
+import subprocess
 
 MM_TO_UNITS = 1
 
-DRAWING_WIDTH = 100
-DRAWING_HEIGHT = 40
+DRAWING_WIDTH = 98
+DRAWING_HEIGHT = 38
+PC_PRINCIPAL_IP = "192.168.1.216"
+PC_PRINCIPAL_PORT = 5001  # Define the port number
+
 
 
 class Drawable:
@@ -25,7 +29,6 @@ class Drawable:
 
 class PaintEcran:
     def __init__(self, root):
-        print("Démarrage de PaintEcran.__init__")
         self.root = root
         self.root.title("paint_ecran.py")
         self.root.attributes('-fullscreen', True)
@@ -44,23 +47,54 @@ class PaintEcran:
         self.canvas.bind("<Configure>", lambda e: self.set_canvas_zone())
 
     def setup_ui(self):
-        sidebar = tk.Frame(self.root)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        # Fond général
+        self.root.configure(bg="#e3e6f3")
+        # Titre en haut
+        title = tk.Label(self.root, text="Draw", font=("Arial", 20, "bold"), bg="#e3e6f3", fg="#22223b")
+        title.pack(pady=(10, 2))
 
-        tk.Label(sidebar, text="Zone de dessin:").pack()
-        tk.Radiobutton(sidebar, text="Rectangle", variable=self.zone_mode, value="rectangle",
-                       command=self.set_canvas_zone).pack(anchor=tk.W)
+        # Bouton croix rouge pour fermer l'appli en haut à droite
+        close_btn = tk.Button(self.root, text="✖", font=("Arial", 18, "bold"), fg="white", bg="#e63946", activebackground="#b5171e", activeforeground="white", bd=0, relief=tk.FLAT, command=self.root.destroy)
+        close_btn.place(relx=1.0, y=10, anchor="ne")
 
-        tk.Label(sidebar, text="\nOutils:").pack()
-        for tool in ["freehand", "line", "rectangle", "circle", "text", "select"]:
-            tk.Radiobutton(sidebar, text=tool.capitalize(), variable=self.tool_mode, value=tool).pack(anchor=tk.W)
+        # Zone de dessin centrée avec bordure douce
+        canvas_frame = tk.Frame(self.root, bg="#e3e6f3")
+        canvas_frame.pack(expand=True, fill=tk.BOTH)
+        self.canvas = tk.Canvas(canvas_frame, bg="#fff", highlightthickness=0, bd=0, relief=tk.FLAT)
+        self.canvas.pack(expand=True, fill=tk.BOTH, padx=60, pady=40)
+        self.canvas.create_rectangle(10, 10, self.canvas.winfo_reqwidth()-10, self.canvas.winfo_reqheight()-10, outline="#bfc0c0", width=3)
 
-        tk.Button(sidebar, text="Supprimer", command=self.delete_selected).pack(pady=5)
-        tk.Button(sidebar, text="Exporter en DXF", command=self.export_dxf).pack(pady=20)
-        tk.Button(sidebar, text="Reset (Clear)", command=self.reset_canvas).pack(pady=5)
+        # Barre d'outils horizontale en bas, centrée
+        toolbar = tk.Frame(self.root, bg="#f5f6fa")
+        toolbar.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 10))
 
-        self.canvas = tk.Canvas(self.root, bg="white")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        # Sous-frame centrée pour les outils
+        tools_frame = tk.Frame(toolbar, bg="#f5f6fa")
+        tools_frame.pack(side=tk.TOP, pady=5)
+
+        button_style = {"font": ("Arial", 21), "bg": "#a3cef1", "fg": "#22223b", "activebackground": "#5390d9", "activeforeground": "white", "bd": 0, "relief": tk.FLAT, "width": 16, "height": 2}
+        radio_style = {"font": ("Arial", 20), "bg": "#bde0fe", "selectcolor": "#48bfe3", "indicatoron": 0, "width": 12, "height": 2, "bd": 0, "relief": tk.FLAT}
+
+        # Outils avec texte
+        tool_labels = [
+            ("freehand", "Dessin libre"),
+            ("line", "Ligne"),
+            ("rectangle", "Rectangle"),
+            ("circle", "Cercle"),
+            ("text", "Texte"),
+            ("select", "Sélection")
+        ]
+        for tool, label in tool_labels:
+            tk.Radiobutton(tools_frame, text=label, variable=self.tool_mode, value=tool, **radio_style).pack(side=tk.LEFT, padx=10, pady=5)
+
+        # Sous-frame centrée pour les boutons d'action
+        actions_frame = tk.Frame(toolbar, bg="#f5f6fa")
+        actions_frame.pack(side=tk.TOP, pady=10)
+
+        # Boutons d'action plus gros et texte visible
+        tk.Button(actions_frame, text="Supprimer la sélection", command=self.delete_selected, **button_style).pack(side=tk.LEFT, padx=15)
+        tk.Button(actions_frame, text="Envoyer à la graveuse", command=self.export_dxf, **button_style).pack(side=tk.LEFT, padx=15)
+        tk.Button(actions_frame, text="Réinitialiser la page", command=self.reset_canvas, **button_style).pack(side=tk.LEFT, padx=15)
 
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -76,15 +110,16 @@ class PaintEcran:
         self.set_canvas_zone()
 
     def get_zone_coords(self):
-        """Calcule les coordonnées (x0, y0, x1, y1) de la zone de dessin centrée et agrandie dynamiquement dans le canvas."""
+        """Calcule les coordonnées (x0, y0, x1, y1) de la zone de dessin centrée et agrandie dynamiquement dans le canvas, avec une marge autour."""
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
+        margin = 40  # marge en pixels de chaque côté
         # Dimensions réelles en mm
         zone_width_mm = DRAWING_WIDTH
         zone_height_mm = DRAWING_HEIGHT
-        # Calcul du facteur d'échelle maximal pour que la zone tienne dans le canvas
-        scale_x = canvas_width / zone_width_mm
-        scale_y = canvas_height / zone_height_mm
+        # Calcul du facteur d'échelle maximal pour que la zone tienne dans le canvas avec la marge
+        scale_x = (canvas_width - 2 * margin) / zone_width_mm
+        scale_y = (canvas_height - 2 * margin) / zone_height_mm
         scale = min(scale_x, scale_y)
         # Taille réelle en pixels
         zone_width_px = zone_width_mm * scale
@@ -130,48 +165,96 @@ class PaintEcran:
             self.hide_control_points()
         elif tool == "text":
             self.hide_control_points()
-            # Nouvelle boîte de dialogue modale pour le texte
             dialog = tk.Toplevel(self.root)
             dialog.title("Texte")
             dialog.transient(self.root)
             dialog.geometry(f"+{self.root.winfo_rootx() + 200}+{self.root.winfo_rooty() + 200}")
-
-            dialog.wait_visibility()  # S'assurer que la fenêtre est visible avant grab_set
+            dialog.wait_visibility()
             dialog.grab_set()
-
-            tk.Label(dialog, text="Texte :").pack()
+            tk.Label(dialog, text="Texte :", font=("Arial", 22)).pack(pady=(20,5))
             text_var = tk.StringVar()
-            text_entry = tk.Entry(dialog, textvariable=text_var)
-            text_entry.pack()
-
-            tk.Label(dialog, text="Taille (mm) :").pack()
+            text_entry = tk.Entry(dialog, textvariable=text_var, font=("Arial", 28), width=18)
+            text_entry.pack(ipadx=30, ipady=10, pady=10)
+            text_entry.focus_set()
+            tk.Label(dialog, text="Taille (mm) :", font=("Arial", 18)).pack(pady=(10,0))
             size_var = tk.StringVar(value="5")
-            size_entry = tk.Entry(dialog, textvariable=size_var)
-            size_entry.pack()
-
-            tk.Label(dialog, text="Police :").pack()
-            # Suppression du choix de police, on force la police par défaut
-            font_var = tk.StringVar(value="DejaVu Sans")
-            # ...existing code...
-
-            preview_id = None
-            def update_preview(*_):
-                nonlocal preview_id
-                if preview_id:
-                    self.canvas.delete(preview_id)
-                try:
-                    size_px = int(float(size_var.get()) * 10)
-                except ValueError:
-                    size_px = 50
-                preview_id = self.canvas.create_text(
-                    event.x, event.y, text=text_var.get(), font=(font_var.get(), size_px),
-                    anchor="nw", tags="preview"
-                )
-
-            text_var.trace_add("write", update_preview)
-            size_var.trace_add("write", update_preview)
-            font_var.trace_add("write", update_preview)
-
+            size_entry = tk.Entry(dialog, textvariable=size_var, font=("Arial", 22), width=8)
+            size_entry.pack(ipadx=10, ipady=5, pady=10)
+            # Clavier virtuel intégré avec navigation entre champs
+            is_upper = [False]
+            current_field = [text_entry]  # Pour garder la référence du champ actif
+            def insert_char(c):
+                current_field[0].insert(tk.END, c)
+                current_field[0].focus_set()
+            def backspace():
+                entry = current_field[0]
+                val = entry.get()
+                entry.delete(0, tk.END)
+                entry.insert(0, val[:-1])
+                entry.focus_set()
+            def space():
+                current_field[0].insert(tk.END, ' ')
+                current_field[0].focus_set()
+            def toggle_case():
+                is_upper[0] = not is_upper[0]
+                update_keyboard()
+            def switch_field():
+                if current_field[0] == text_entry:
+                    current_field[0] = size_entry
+                else:
+                    current_field[0] = text_entry
+                current_field[0].focus_set()
+            keyboard_frame = tk.Frame(dialog)
+            keyboard_frame.pack(pady=10)
+            letter_keys = ['a','z','e','r','t','y','u','i','o','p',
+                           'q','s','d','f','g','h','j','k','l','m',
+                           'w','x','c','v','b','n']
+            number_keys = ['1','2','3','4','5','6','7','8','9','0']
+            key_buttons = []
+            def update_keyboard():
+                for btn, key in key_buttons:
+                    if key.isalpha():
+                        btn.config(text=key.upper() if is_upper[0] else key.lower(),
+                                   command=lambda c=(key.upper() if is_upper[0] else key.lower()): insert_char(c))
+            # Ligne chiffres
+            row_frame = tk.Frame(keyboard_frame)
+            row_frame.pack()
+            for key in number_keys:
+                btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
+                key_buttons.append((btn, key))
+            # Ligne lettres 1
+            row_frame = tk.Frame(keyboard_frame)
+            row_frame.pack()
+            for key in letter_keys[:10]:
+                btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
+                key_buttons.append((btn, key))
+            # Ligne lettres 2
+            row_frame = tk.Frame(keyboard_frame)
+            row_frame.pack()
+            for key in letter_keys[10:20]:
+                btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
+                key_buttons.append((btn, key))
+            # Ligne lettres 3 + Maj + Effacer + Champ suivant
+            row_frame = tk.Frame(keyboard_frame)
+            row_frame.pack()
+            maj_btn = tk.Button(row_frame, text='Maj', width=5, height=2, font=("Arial", 18), command=toggle_case)
+            maj_btn.pack(side=tk.LEFT, padx=2, pady=2)
+            for key in letter_keys[20:]:
+                btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
+                key_buttons.append((btn, key))
+            tk.Button(row_frame, text='⌫', width=4, height=2, font=("Arial", 18), command=backspace).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Button(row_frame, text='Champ suivant', width=12, height=2, font=("Arial", 18), command=switch_field).pack(side=tk.LEFT, padx=2, pady=2)
+            # Ligne espace
+            row_frame = tk.Frame(keyboard_frame)
+            row_frame.pack()
+            tk.Button(row_frame, text='Espace', width=20, height=2, font=("Arial", 18), command=space).pack(side=tk.LEFT, padx=2, pady=2)
+            update_keyboard()
+            btn_frame = tk.Frame(dialog)
+            btn_frame.pack(pady=20)
             def confirm():
                 text = text_var.get()
                 try:
@@ -179,10 +262,10 @@ class PaintEcran:
                     if size_mm <= 0:
                         raise ValueError
                 except ValueError:
-                    messagebox.showerror("Erreur", "Taille invalide.")
+                    size_entry.config(bg="#ffcccc")
                     return
                 size_px = int(size_mm * 10)
-                font_name = font_var.get()
+                font_name = "DejaVu Sans"
                 if text:
                     canvas_id = self.canvas.create_text(
                         event.x, event.y,
@@ -194,23 +277,12 @@ class PaintEcran:
                     drawable.size_mm = size_mm
                     drawable.font = font_name
                     self.objects.append(drawable)
-                if preview_id:
-                    self.canvas.delete("preview")
                 dialog.destroy()
-
             def cancel():
-                if preview_id:
-                    self.canvas.delete("preview")
                 dialog.destroy()
-
-            btn_frame = tk.Frame(dialog)
-            btn_frame.pack(pady=5)
-            tk.Button(btn_frame, text="OK", command=confirm).pack(side=tk.LEFT, padx=5)
-            tk.Button(btn_frame, text="Annuler", command=cancel).pack(side=tk.LEFT, padx=5)
-
-            text_entry.focus_set()
+            tk.Button(btn_frame, text="OK", command=confirm, font=("Arial", 20), width=8, bg="#a3cef1").pack(side=tk.LEFT, padx=10)
+            tk.Button(btn_frame, text="Annuler", command=cancel, font=("Arial", 20), width=8, bg="#bde0fe").pack(side=tk.LEFT, padx=10)
             dialog.wait_window(dialog)
-
         elif tool == "select":
             self.select_object(event.x, event.y)
 
@@ -331,11 +403,6 @@ class PaintEcran:
         size_entry = tk.Entry(dialog, textvariable=size_var)
         size_entry.pack()
 
-        tk.Label(dialog, text="Police :").pack()
-        # Suppression du choix de police, on force la police par défaut
-        font_var = tk.StringVar(value="DejaVu Sans")
-        # ...existing code...
-
         tk.Label(dialog, text="Position X :").pack()
         x_var = tk.StringVar(value=str(int(x)))
         x_entry = tk.Entry(dialog, textvariable=x_var)
@@ -359,12 +426,12 @@ class PaintEcran:
             canvas_id = self.canvas.create_text(
                 new_x, new_y,
                 text=text_var.get(),
-                font=(font_var.get(), int(size_mm * 10)),
+                font=("DejaVu Sans", int(size_mm * 10)),
                 anchor="nw"
             )
             obj.text = text_var.get()
             obj.size_mm = size_mm
-            obj.font = font_var.get()
+            obj.font = "DejaVu Sans"
             obj.coords = [(new_x, new_y)]
             obj.canvas_id = canvas_id
             dialog.destroy()
@@ -639,9 +706,41 @@ class PaintEcran:
 
         try:
             doc.saveas("dxf3.dxf")
-            messagebox.showinfo("Export", "Fichier 'dxf3.dxf' exporté avec succès.")
+            # Suppression des boîtes de dialogue inutiles
+            # messagebox.showinfo("Export", "Fichier 'dxf3.dxf' exporté avec succès.")
+            # Envoi TCP au PC principal
+            if self.send_dxf_to_pc("dxf3.dxf", PC_PRINCIPAL_IP, PC_PRINCIPAL_PORT):
+                # Affiche une boîte de dialogue très brève pour signaler l'envoi
+                notif = tk.Toplevel(self.root)
+                notif.title("Envoi")
+                notif.geometry(f"+{self.root.winfo_rootx() + 400}+{self.root.winfo_rooty() + 400}")
+                tk.Label(notif, text="Fichier envoyé à la graveuse !", font=("Arial", 20)).pack(padx=30, pady=30)
+                notif.after(1200, notif.destroy)  # Ferme après 1,2 seconde
+            # else:  # Optionnel : pas de boîte d'erreur, ou tu peux en mettre une si tu veux
+            #     pass
         except Exception as e:
-            messagebox.showerror("Erreur export", str(e))
+            # Affiche une boîte d'erreur uniquement si l'export échoue
+            notif = tk.Toplevel(self.root)
+            notif.title("Erreur export")
+            notif.geometry(f"+{self.root.winfo_rootx() + 400}+{self.root.winfo_rooty() + 400}")
+            tk.Label(notif, text=f"Erreur export : {e}", font=("Arial", 16), fg="red").pack(padx=30, pady=30)
+            notif.after(2000, notif.destroy)
+
+    @staticmethod
+    def send_dxf_to_pc(filepath, pc_ip, port=5001):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((pc_ip, port))
+                with open(filepath, 'rb') as f:
+                    while True:
+                        data = f.read(4096)
+                        if not data:
+                            break
+                        s.sendall(data)
+            return True
+        except Exception as e:
+            print(f"Erreur d'envoi TCP : {e}")
+            return False
 
     # Ajout: gestion des points de contrôle pour modification tactile
     def show_control_points(self, obj):
@@ -861,3 +960,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = PaintEcran(root)
     root.mainloop()
+
