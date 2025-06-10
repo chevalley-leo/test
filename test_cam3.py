@@ -50,16 +50,17 @@ temporal = rs.temporal_filter()
 initial_model_points = np.asarray(pcd_model.points).copy()
 
 # Method to find the best rotation angle
-def find_best_rotation(pcd_model, pcd_piece, axis, angle_range, angle_step=3):
+def find_best_rotation(pcd_model, pcd_piece, axis, angle_range, angle_step=3, fit_tolerance=0.01):
     def calculate_average_distance(source_points, target_points):
         tree = cKDTree(target_points)
         distances, _ = tree.query(source_points, k=1)
-        return np.mean(distances)
+        return np.mean(distances), distances
 
     initial_model_points = np.asarray(pcd_model.points).copy()
     center_of_model = np.mean(initial_model_points, axis=0)
     best_angle = None
     min_distance = float('inf')
+    best_distances = None
     angles = np.arange(*angle_range, angle_step)
 
     for angle in angles:
@@ -68,17 +69,24 @@ def find_best_rotation(pcd_model, pcd_piece, axis, angle_range, angle_step=3):
         rotation_vector = [angle_rad if axis == 'x' else 0, angle_rad if axis == 'y' else 0, angle_rad if axis == 'z' else 0]
         rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(rotation_vector)
         pcd_model.rotate(rotation_matrix, center=center_of_model)
-        avg_distance = calculate_average_distance(np.asarray(pcd_model.points), np.asarray(pcd_piece.points))
+        avg_distance, distances = calculate_average_distance(np.asarray(pcd_model.points), np.asarray(pcd_piece.points))
         if avg_distance < min_distance:
             min_distance = avg_distance
             best_angle = angle
+            best_distances = distances
 
     pcd_model.points = o3d.utility.Vector3dVector(initial_model_points)
     angle_rad = np.radians(best_angle)
     best_rotation_vector = [angle_rad if axis == 'x' else 0, angle_rad if axis == 'y' else 0, angle_rad if axis == 'z' else 0]
     best_rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(best_rotation_vector)
     pcd_model.rotate(best_rotation_matrix, center=center_of_model)
-    return best_rotation_matrix
+
+    # Calcul du pourcentage de fit
+    fit_percent = 0.0
+    if best_distances is not None and len(best_distances) > 0:
+        fit_percent = np.sum(best_distances < fit_tolerance) / len(best_distances) * 100
+    print(f"[find_best_rotation] axis={axis}, best_angle={best_angle}, fit={fit_percent:.1f}% (tol={fit_tolerance})")
+    return best_rotation_matrix, fit_percent
 
 # Main loop
 try:
@@ -152,10 +160,11 @@ try:
         pcd_model = pcd_model.voxel_down_sample(voxel_size)
         pcd_piece = pcd_piece.voxel_down_sample(voxel_size)
 
-        rot_Y = find_best_rotation(pcd_model, pcd_piece, axis='y', angle_range=(-30, 35))
-        rot_X = find_best_rotation(pcd_model, pcd_piece, axis='x', angle_range=(-30, 35))
-        rot_Z = find_best_rotation(pcd_model, pcd_piece, axis='z', angle_range=(0, 360))
+        rot_Y, fit_Y = find_best_rotation(pcd_model, pcd_piece, axis='y', angle_range=(-30, 35))
+        rot_X, fit_X = find_best_rotation(pcd_model, pcd_piece, axis='x', angle_range=(-30, 35))
+        rot_Z, fit_Z = find_best_rotation(pcd_model, pcd_piece, axis='z', angle_range=(0, 360))
         best_rotation_matrix = rot_X @ rot_Y @ rot_Z
+        print(f"Fit Y: {fit_Y:.1f}%, Fit X: {fit_X:.1f}%, Fit Z: {fit_Z:.1f}%")
 
         global_transformation = np.eye(4)
         translation_matrix = np.eye(4)
@@ -181,8 +190,8 @@ try:
         piece_quaternion = R.from_matrix(piece_orientation_world).as_quat()
         piece_quaternion = [piece_quaternion[3], piece_quaternion[0], piece_quaternion[1], piece_quaternion[2]]
 
-        print(f"Position: {piece_position_world}")
-        print(f"Orientation (quaternion): {piece_quaternion}")
+        # print(f"Position: {piece_position_world}")
+       # print(f"Orientation (quaternion): {piece_quaternion}")
 
 
 
