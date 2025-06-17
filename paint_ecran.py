@@ -57,6 +57,10 @@ class PaintEcran:
         close_btn = tk.Button(self.root, text="✖", font=("Arial", 18, "bold"), fg="white", bg="#e63946", activebackground="#b5171e", activeforeground="white", bd=0, relief=tk.FLAT, command=self.root.destroy)
         close_btn.place(relx=1.0, y=10, anchor="ne")
 
+        # Bouton plein écran à côté du bouton fermer
+        fullscreen_btn = tk.Button(self.root, text="⛶", font=("Arial", 18, "bold"), fg="white", bg="#457b9d", activebackground="#1d3557", activeforeground="white", bd=0, relief=tk.FLAT, command=self.toggle_fullscreen)
+        fullscreen_btn.place(relx=0.96, y=10, anchor="ne")
+
         # Zone de dessin centrée avec bordure douce
         canvas_frame = tk.Frame(self.root, bg="#e3e6f3")
         canvas_frame.pack(expand=True, fill=tk.BOTH)
@@ -75,26 +79,36 @@ class PaintEcran:
         button_style = {"font": ("Arial", 21), "bg": "#a3cef1", "fg": "#22223b", "activebackground": "#5390d9", "activeforeground": "white", "bd": 0, "relief": tk.FLAT, "width": 16, "height": 2}
         radio_style = {"font": ("Arial", 20), "bg": "#bde0fe", "selectcolor": "#48bfe3", "indicatoron": 0, "width": 12, "height": 2, "bd": 0, "relief": tk.FLAT}
 
-        # Outils avec texte
+        # Outils avec texte (sauf Sélection)
         tool_labels = [
             ("freehand", "Dessin libre"),
             ("line", "Ligne"),
             ("rectangle", "Rectangle"),
             ("circle", "Cercle"),
-            ("text", "Texte"),
-            ("select", "Selection")
+            ("text", "Texte")
         ]
         for tool, label in tool_labels:
             tk.Radiobutton(tools_frame, text=label, variable=self.tool_mode, value=tool, **radio_style).pack(side=tk.LEFT, padx=10, pady=5)
 
-        # Sous-frame centrée pour les boutons d'action
+        # Ligne du bas : actions + bouton Sélection à gauche
         actions_frame = tk.Frame(toolbar, bg="#f5f6fa")
-        actions_frame.pack(side=tk.TOP, pady=10)
+        actions_frame.pack(side=tk.TOP, pady=10, fill=tk.X)
 
-        # Boutons d'action plus gros et texte visible
-        tk.Button(actions_frame, text="Supprimer la sélection", command=self.delete_selected, **button_style).pack(side=tk.LEFT, padx=15)
-        tk.Button(actions_frame, text="Envoyer à la graveuse", command=self.export_dxf, **button_style).pack(side=tk.LEFT, padx=15)
-        tk.Button(actions_frame, text="Réinitialiser la page", command=self.reset_canvas, **button_style).pack(side=tk.LEFT, padx=15)
+        # Centrage horizontal des boutons
+        actions_inner = tk.Frame(actions_frame, bg="#f5f6fa")
+        actions_inner.pack(expand=True)
+
+        # Bouton Sélection à gauche (même style que les autres boutons du bas)
+        tk.Button(actions_inner, text="Sélection", command=lambda: self.tool_mode.set("select"), font=("Arial", 21), bg="#bde0fe", fg="#22223b", activebackground="#48bfe3", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
+
+        # Bouton Supprimer la sélection (style inchangé)
+        tk.Button(actions_inner, text="Supprimer la sélection", command=self.delete_selected, **button_style).pack(side=tk.LEFT, padx=15)
+
+        # Bouton Valider (vert, icône ✔)
+        tk.Button(actions_inner, text="✔ Valider", command=self.export_dxf, font=("Arial", 21), bg="#4CAF50", fg="white", activebackground="#388E3C", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
+
+        # Bouton Tout effacer (rouge)
+        tk.Button(actions_inner, text="Tout effacer", command=self.reset_canvas, font=("Arial", 21), bg="#e63946", fg="white", activebackground="#b5171e", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
 
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -168,7 +182,8 @@ class PaintEcran:
             dialog = tk.Toplevel(self.root)
             dialog.title("Texte")
             dialog.transient(self.root)
-            dialog.geometry(f"+{self.root.winfo_rootx() + 200}+{self.root.winfo_rooty() + 200}")
+            # Positionne la fenêtre en haut à gauche
+            dialog.geometry("+20+20")
             dialog.wait_visibility()
             dialog.grab_set()
             tk.Label(dialog, text="Texte :", font=("Arial", 22)).pack(pady=(20,5))
@@ -264,7 +279,7 @@ class PaintEcran:
                 except ValueError:
                     size_entry.config(bg="#ffcccc")
                     return
-                size_px = int(size_mm * 10)
+                size_px = self.mm_to_tk_font_size(size_mm)
                 font_name = "DejaVu Sans"
                 if text:
                     canvas_id = self.canvas.create_text(
@@ -399,7 +414,7 @@ class PaintEcran:
         text_entry.pack()
 
         tk.Label(dialog, text="Taille (mm) :").pack()
-        size_var = tk.StringVar(value=str(getattr(obj, "size_mm", 5)))
+        size_var = tk.StringVar(value=str(getattr(obj, "size_mm", 10)))
         size_entry = tk.Entry(dialog, textvariable=size_var)
         size_entry.pack()
 
@@ -423,10 +438,11 @@ class PaintEcran:
                 messagebox.showerror("Erreur", "Valeur(s) invalide(s).")
                 return
             self.canvas.delete(obj.canvas_id)
+            size_px = int(size_mm * self._current_scale)  # Correction ici
             canvas_id = self.canvas.create_text(
                 new_x, new_y,
                 text=text_var.get(),
-                font=("DejaVu Sans", int(size_mm * 10)),
+                font=("DejaVu Sans", size_px),
                 anchor="nw"
             )
             obj.text = text_var.get()
@@ -682,7 +698,7 @@ class PaintEcran:
                 height = getattr(obj, "size_mm", 5)
                 fontname = getattr(obj, "font", "DejaVu Sans")
                 # Correction taille : conversion mm -> points
-                size_pt = height / 0.3528 * 0.564
+                size_pt = height / 0.41
                 try:
                     fp = FontProperties(family=fontname, size=size_pt)
                     tp = TextPath((0, 0), obj.text, prop=fp, size=size_pt)
@@ -695,9 +711,7 @@ class PaintEcran:
                         poly = np.array(poly)
                         poly[:, 0] -= min_x
                         poly[:, 1] -= max_y
-                        poly[:, 1] -= bbox_height * 0.23 # Ajuste ce facteur si besoin
-                        # Décalage vertical fixe supplémentaire pour descendre le texte
-                        #poly[:, 1] += 2   Décale de 2 mm vers le bas (ajuste cette valeur si besoin)
+                        poly[:, 1] -= bbox_height * 0.24
                         poly[:, 0] = poly[:, 0] * 0.3528 + x + offset_x
                         poly[:, 1] = poly[:, 1] * 0.3528 + y + offset_y
                         msp.add_lwpolyline([tuple(pt) for pt in poly], close=True)
@@ -954,6 +968,22 @@ class PaintEcran:
 
     def stop_drag_control_point(self, event):
         pass  # Désactivé : plus de redimensionnement
+
+    # Calcule la taille en pixels pour obtenir la bonne hauteur en mm
+    def mm_to_tk_font_size(self, size_mm):
+        # 1. Crée un texte temporaire
+        test_id = self.canvas.create_text(0, 0, text="Hg", font=("DejaVu Sans", int(size_mm * self._current_scale)), anchor="nw")
+        bbox = self.canvas.bbox(test_id)
+        height_px = bbox[3] - bbox[1]
+        self.canvas.delete(test_id)
+        # 2. Calcule le coefficient correctif
+        target_height_px = size_mm * self._current_scale
+        correction = target_height_px / height_px if height_px else 1
+        return int(size_mm * self._current_scale * correction)
+
+    def toggle_fullscreen(self):
+        is_fullscreen = self.root.attributes('-fullscreen')
+        self.root.attributes('-fullscreen', not is_fullscreen)
 
 
 if __name__ == "__main__":

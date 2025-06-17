@@ -19,3 +19,4 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         break
                     f.write(data)
             print("Fichier reçu et sauvegardé.")
+

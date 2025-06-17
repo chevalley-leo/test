@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=PaintEcran
+Exec=/home/laboc38/dist/paint_ecran
+Icon=utilities-terminal
+Terminal=false
