@@ -8,6 +8,7 @@ from matplotlib.font_manager import FontProperties
 import numpy as np
 import socket
 import subprocess
+import os
 
 MM_TO_UNITS = 1
 
@@ -41,10 +42,34 @@ class PaintEcran:
         self.start_pos = None
         self.selected_obj = None
 
+        self.logo_dxf_path = os.path.join(os.path.dirname(__file__), "heig_vd.dxf")
+        self.logo_polylines = self.load_logo_dxf(self.logo_dxf_path)
+
         self.setup_ui()
         self.set_canvas_zone()
 
         self.canvas.bind("<Configure>", lambda e: self.set_canvas_zone())
+
+    def load_logo_dxf(self, dxf_path):
+        """Charge les polylignes du logo DXF et retourne une liste de listes de points (en mm)."""
+        polylines = []
+        try:
+            doc = ezdxf.readfile(dxf_path)
+            msp = doc.modelspace()
+            for e in msp:
+                if e.dxftype() == "LWPOLYLINE":
+                    pts = [(v[0], v[1]) for v in e]
+                    polylines.append(pts)
+                elif e.dxftype() == "POLYLINE":
+                    pts = [(v.dxf.location.x, v.dxf.location.y) for v in e.vertices]
+                    polylines.append(pts)
+                elif e.dxftype() == "LINE":
+                    start = e.dxf.start
+                    end = e.dxf.end
+                    polylines.append([start[:2], end[:2]])
+        except Exception as e:
+            print(f"Erreur chargement logo DXF: {e}")
+        return polylines
 
     def setup_ui(self):
         # Fond général
@@ -146,14 +171,45 @@ class PaintEcran:
         return x0, y0, x1, y1
 
     def set_canvas_zone(self):
-        """Dessine la zone de dessin centrée dans le canvas."""
+        """Dessine la zone de dessin centrée dans le canvas et le logo en bas à droite."""
         self.canvas.delete("all")
         self.objects.clear()
 
         x0, y0, x1, y1 = self.get_zone_coords()
-
         # Toujours rectangle
         self.canvas.create_rectangle(x0, y0, x1, y1, outline="black", width=2)
+        # Affiche le logo
+        self.draw_logo_on_canvas(x0, y0, x1, y1)
+
+    def draw_logo_on_canvas(self, x0, y0, x1, y1):
+        """Dessine le logo DXF dans le coin bas droit de la zone de dessin."""
+        if not self.logo_polylines:
+            return
+        # Taille du logo dans le DXF (en mm)
+        logo_width_mm = 187  # Largeur max X du DXF
+        logo_height_mm = 140  # Hauteur max Y du DXF
+        # Taille d'affichage (en mm) - 2x plus grand qu'actuellement
+        display_width_mm = (30 / 5) * 2
+        display_height_mm = (20 / 5) * 2
+        margin_mm = 2
+        scale = min(display_width_mm / logo_width_mm, display_height_mm / logo_height_mm)
+        zone_width_mm = DRAWING_WIDTH
+        zone_height_mm = DRAWING_HEIGHT
+        logo_x0_mm = zone_width_mm - display_width_mm - margin_mm
+        logo_y0_mm = margin_mm
+        for poly in self.logo_polylines:
+            if len(poly) < 2:
+                continue
+            points = []
+            for px, py in poly:
+                x_mm = logo_x0_mm + (px * scale)
+                y_mm = logo_y0_mm + (py * scale)
+                x_canvas, y_canvas = self.real_to_canvas(x_mm, y_mm)
+                points.append((x_canvas, y_canvas))
+            # Fermer la polyligne si elle n'est pas déjà fermée
+            if points[0] != points[-1]:
+                points.append(points[0])
+            self.canvas.create_line(points, fill="#888", width=2, tags="logo", smooth=False)
 
     def canvas_to_real(self, x, y):
         """Convertit les coordonnées du canvas (pixels) en coordonnées réelles (millimètres)."""
@@ -321,13 +377,15 @@ class PaintEcran:
             dx = event.x - self._drag_data['x']
             dy = event.y - self._drag_data['y']
             self.canvas.move(self.selected_obj.canvas_id, dx, dy)
-            # Met à jour les coordonnées internes
             self.selected_obj.coords = [(x+dx, y+dy) for (x, y) in self.selected_obj.coords]
             self._drag_data = {'x': event.x, 'y': event.y}
 
     def on_release(self, event):
         tool = self.tool_mode.get()
-        x0, y0 = self.start_pos if self.start_pos else (event.x, event.y)
+        if self.start_pos:
+            x0, y0 = self.start_pos
+        else:
+            x0, y0 = event.x, event.y
         x1, y1 = event.x, event.y
 
         if tool == "freehand" and self.current:
@@ -654,7 +712,7 @@ class PaintEcran:
                 cx = (x0 + x1) / 2
                 cy = (y0 + y1) / 2
                 angle = getattr(obj, 'angle', 0)
-                angle_rad = math.radians(angle)
+                angle_rad = math.radians(-angle)  # Inverse le sens de rotation pour le DXF
                 # 4 coins avant rotation
                 pts = [
                     (x0, y0), (x1, y0), (x1, y1), (x0, y1)
@@ -686,8 +744,13 @@ class PaintEcran:
                 else:
                     # Ellipse avec rotation (rotation via major_axis)
                     angle_rad = math.radians(-angle)  # Inverser l'angle pour le repère DXF
-                    major_axis = (rx * math.cos(angle_rad), rx * math.sin(angle_rad))
-                    ratio = ry / rx if rx != 0 else 1
+                    if ry > rx:
+                        # DXF: major_axis doit être le plus grand, ratio <= 1
+                        major_axis = (ry * math.cos(angle_rad + math.pi/2), ry * math.sin(angle_rad + math.pi/2))
+                        ratio = rx / ry if ry != 0 else 1
+                    else:
+                        major_axis = (rx * math.cos(angle_rad), rx * math.sin(angle_rad))
+                        ratio = ry / rx if rx != 0 else 1
                     msp.add_ellipse(
                         center=(cx_real + offset_x, cy_real + offset_y),
                         major_axis=major_axis,
@@ -717,6 +780,38 @@ class PaintEcran:
                         msp.add_lwpolyline([tuple(pt) for pt in poly], close=True)
                 except Exception as e:
                     msp.add_text(obj.text, dxfattribs={"height": height, "insert": (x + offset_x, y + offset_y)})
+
+        # Ajout du logo dans le DXF exporté
+        try:
+            logo_doc = ezdxf.readfile(self.logo_dxf_path)
+            logo_msp = logo_doc.modelspace()
+            logo_width_mm = 187
+            logo_height_mm = 140
+            display_width_mm = (30 / 5) * 2
+            display_height_mm = (20 / 5) * 2
+            margin_mm = 2
+            scale = min(display_width_mm / logo_width_mm, display_height_mm / logo_height_mm)
+            zone_width_mm = DRAWING_WIDTH
+            zone_height_mm = DRAWING_HEIGHT
+            logo_x0_mm = zone_width_mm - display_width_mm - margin_mm + offset_x
+            logo_y0_mm = margin_mm + offset_y
+            for e in logo_msp:
+                if e.dxftype() == "LWPOLYLINE":
+                    pts = [(logo_x0_mm + v[0]*scale, logo_y0_mm + v[1]*scale) for v in e]
+                    msp.add_lwpolyline(pts, close=e.closed)
+                elif e.dxftype() == "POLYLINE":
+                    pts = [(logo_x0_mm + v.dxf.location.x*scale, logo_y0_mm + v.dxf.location.y*scale) for v in e.vertices]
+                    # Vérifie le flag de fermeture (70)
+                    closed = bool(e.dxf.flags & 1)
+                    msp.add_lwpolyline(pts, close=closed)
+                elif e.dxftype() == "LINE":
+                    start = e.dxf.start
+                    end = e.dxf.end
+                    start_pt = (logo_x0_mm + start[0]*scale, logo_y0_mm + start[1]*scale)
+                    end_pt = (logo_x0_mm + end[0]*scale, logo_y0_mm + end[1]*scale)
+                    msp.add_line(start_pt, end_pt)
+        except Exception as e:
+            print(f"Erreur ajout logo DXF export: {e}")
 
         try:
             doc.saveas("dxf3.dxf")
