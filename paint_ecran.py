@@ -1,57 +1,81 @@
+"""
+paint_ecran.py
+
+Description:
+    Author: Léo Chevalley
+    This script provides a touchscreen-friendly drawing interface using Tkinter, allowing users to draw, edit, and export shapes (lines, rectangles, circles, freehand, text) to DXF format. It supports object manipulation, logo overlay, and network file transfer to a remote PC. Designed for use in educational or prototyping environments with laser or CNC workflows.
+
+License:
+    MIT License
+    Copyright (c) 2025 Léo Chevalley
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+"""
+
+# ======== IMPORTS ========
 import tkinter as tk
-from tkinter import simpledialog, messagebox
+from tkinter import messagebox
 import ezdxf
-import matplotlib
 import math
 from matplotlib.textpath import TextPath
 from matplotlib.font_manager import FontProperties
 import numpy as np
 import socket
-import subprocess
 import os
 
+# ======== CONFIGURATION ========
 MM_TO_UNITS = 1
-
 DRAWING_WIDTH = 98
 DRAWING_HEIGHT = 38
 PC_PRINCIPAL_IP = "192.168.1.216"
-PC_PRINCIPAL_PORT = 5001  # Define the port number
+PC_PRINCIPAL_PORT = 5001
 
-
-
+# ======== DATA STRUCTURES ========
 class Drawable:
     def __init__(self, type_, coords, canvas_id, text=None):
-        self.type = type_  # 'line', 'rect', 'circle', 'text', 'freehand'
+        self.type = type_  # shape type
         self.coords = coords
         self.canvas_id = canvas_id
         self.text = text
-        self.angle = 0  # Ajout de l'angle de rotation (en degrés)
+        self.angle = 0
 
-
+# ======== MAIN APPLICATION CLASS ========
 class PaintEcran:
     def __init__(self, root):
+        # Main application class for drawing and exporting shapes
         self.root = root
         self.root.title("paint_ecran.py")
         self.root.attributes('-fullscreen', True)
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
-
         self.zone_mode = tk.StringVar(value="rectangle")
         self.tool_mode = tk.StringVar(value="freehand")
         self.objects = []
         self.current = None
         self.start_pos = None
         self.selected_obj = None
-
         self.logo_dxf_path = os.path.join(os.path.dirname(__file__), "heig_vd.dxf")
         self.logo_polylines = self.load_logo_dxf(self.logo_dxf_path)
-
         self.setup_ui()
         self.set_canvas_zone()
-
         self.canvas.bind("<Configure>", lambda e: self.set_canvas_zone())
 
     def load_logo_dxf(self, dxf_path):
-        """Charge les polylignes du logo DXF et retourne une liste de listes de points (en mm)."""
+        """Load logo polylines from DXF file."""
         polylines = []
         try:
             doc = ezdxf.readfile(dxf_path)
@@ -68,43 +92,29 @@ class PaintEcran:
                     end = e.dxf.end
                     polylines.append([start[:2], end[:2]])
         except Exception as e:
-            print(f"Erreur chargement logo DXF: {e}")
+            print(f"DXF logo load error: {e}")
         return polylines
 
     def setup_ui(self):
-        # Fond général
+        # Set up the main UI components and toolbars
         self.root.configure(bg="#e3e6f3")
-        # Titre en haut
         title = tk.Label(self.root, text="Draw", font=("Arial", 20, "bold"), bg="#e3e6f3", fg="#22223b")
         title.pack(pady=(10, 2))
-
-        # Bouton croix rouge pour fermer l'appli en haut à droite
         close_btn = tk.Button(self.root, text="✖", font=("Arial", 18, "bold"), fg="white", bg="#e63946", activebackground="#b5171e", activeforeground="white", bd=0, relief=tk.FLAT, command=self.root.destroy)
         close_btn.place(relx=1.0, y=10, anchor="ne")
-
-        # Bouton plein écran à côté du bouton fermer
         fullscreen_btn = tk.Button(self.root, text="⛶", font=("Arial", 18, "bold"), fg="white", bg="#457b9d", activebackground="#1d3557", activeforeground="white", bd=0, relief=tk.FLAT, command=self.toggle_fullscreen)
         fullscreen_btn.place(relx=0.96, y=10, anchor="ne")
-
-        # Zone de dessin centrée avec bordure douce
         canvas_frame = tk.Frame(self.root, bg="#e3e6f3")
         canvas_frame.pack(expand=True, fill=tk.BOTH)
         self.canvas = tk.Canvas(canvas_frame, bg="#fff", highlightthickness=0, bd=0, relief=tk.FLAT)
         self.canvas.pack(expand=True, fill=tk.BOTH, padx=60, pady=40)
         self.canvas.create_rectangle(10, 10, self.canvas.winfo_reqwidth()-10, self.canvas.winfo_reqheight()-10, outline="#bfc0c0", width=3)
-
-        # Barre d'outils horizontale en bas, centrée
         toolbar = tk.Frame(self.root, bg="#f5f6fa")
         toolbar.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 10))
-
-        # Sous-frame centrée pour les outils
         tools_frame = tk.Frame(toolbar, bg="#f5f6fa")
         tools_frame.pack(side=tk.TOP, pady=5)
-
         button_style = {"font": ("Arial", 21), "bg": "#a3cef1", "fg": "#22223b", "activebackground": "#5390d9", "activeforeground": "white", "bd": 0, "relief": tk.FLAT, "width": 16, "height": 2}
         radio_style = {"font": ("Arial", 20), "bg": "#bde0fe", "selectcolor": "#48bfe3", "indicatoron": 0, "width": 12, "height": 2, "bd": 0, "relief": tk.FLAT}
-
-        # Outils avec texte (sauf Sélection)
         tool_labels = [
             ("freehand", "Dessin libre"),
             ("line", "Ligne"),
@@ -114,27 +124,14 @@ class PaintEcran:
         ]
         for tool, label in tool_labels:
             tk.Radiobutton(tools_frame, text=label, variable=self.tool_mode, value=tool, **radio_style).pack(side=tk.LEFT, padx=10, pady=5)
-
-        # Ligne du bas : actions + bouton Sélection à gauche
         actions_frame = tk.Frame(toolbar, bg="#f5f6fa")
         actions_frame.pack(side=tk.TOP, pady=10, fill=tk.X)
-
-        # Centrage horizontal des boutons
         actions_inner = tk.Frame(actions_frame, bg="#f5f6fa")
         actions_inner.pack(expand=True)
-
-        # Bouton Sélection à gauche (même style que les autres boutons du bas)
         tk.Button(actions_inner, text="Sélection", command=lambda: self.tool_mode.set("select"), font=("Arial", 21), bg="#bde0fe", fg="#22223b", activebackground="#48bfe3", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
-
-        # Bouton Supprimer la sélection (style inchangé)
         tk.Button(actions_inner, text="Supprimer la sélection", command=self.delete_selected, **button_style).pack(side=tk.LEFT, padx=15)
-
-        # Bouton Valider (vert, icône ✔)
         tk.Button(actions_inner, text="✔ Valider", command=self.export_dxf, font=("Arial", 21), bg="#4CAF50", fg="white", activebackground="#388E3C", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
-
-        # Bouton Tout effacer (rouge)
         tk.Button(actions_inner, text="Tout effacer", command=self.reset_canvas, font=("Arial", 21), bg="#e63946", fg="white", activebackground="#b5171e", activeforeground="white", bd=0, relief=tk.FLAT, width=16, height=2).pack(side=tk.LEFT, padx=15)
-
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -142,25 +139,24 @@ class PaintEcran:
         self.root.bind("<Delete>", lambda e: self.delete_selected())
 
     def reset_canvas(self):
+        # Clear all drawings and reset the canvas
         self.canvas.delete("all")
         self.objects.clear()
         self.selected_obj = None
         self.hide_control_points()
         self.set_canvas_zone()
 
+    # --- Drawing and coordinate conversion ---
     def get_zone_coords(self):
-        """Calcule les coordonnées (x0, y0, x1, y1) de la zone de dessin centrée et agrandie dynamiquement dans le canvas, avec une marge autour."""
+        # Compute drawing zone coordinates in pixels
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-        margin = 40  # marge en pixels de chaque côté
-        # Dimensions réelles en mm
+        margin = 40
         zone_width_mm = DRAWING_WIDTH
         zone_height_mm = DRAWING_HEIGHT
-        # Calcul du facteur d'échelle maximal pour que la zone tienne dans le canvas avec la marge
         scale_x = (canvas_width - 2 * margin) / zone_width_mm
         scale_y = (canvas_height - 2 * margin) / zone_height_mm
         scale = min(scale_x, scale_y)
-        # Taille réelle en pixels
         zone_width_px = zone_width_mm * scale
         zone_height_px = zone_height_mm * scale
         x0 = (canvas_width - zone_width_px) / 2
@@ -171,24 +167,19 @@ class PaintEcran:
         return x0, y0, x1, y1
 
     def set_canvas_zone(self):
-        """Dessine la zone de dessin centrée dans le canvas et le logo en bas à droite."""
+        # Draw the main drawing zone and logo
         self.canvas.delete("all")
         self.objects.clear()
-
         x0, y0, x1, y1 = self.get_zone_coords()
-        # Toujours rectangle
         self.canvas.create_rectangle(x0, y0, x1, y1, outline="black", width=2)
-        # Affiche le logo
         self.draw_logo_on_canvas(x0, y0, x1, y1)
 
     def draw_logo_on_canvas(self, x0, y0, x1, y1):
-        """Dessine le logo DXF dans le coin bas droit de la zone de dessin."""
+        # Draw the logo in the drawing zone if available
         if not self.logo_polylines:
             return
-        # Taille du logo dans le DXF (en mm)
-        logo_width_mm = 187  # Largeur max X du DXF
-        logo_height_mm = 140  # Hauteur max Y du DXF
-        # Taille d'affichage (en mm) - 2x plus grand qu'actuellement
+        logo_width_mm = 187
+        logo_height_mm = 140
         display_width_mm = (30 / 5) * 2
         display_height_mm = (20 / 5) * 2
         margin_mm = 2
@@ -206,28 +197,29 @@ class PaintEcran:
                 y_mm = logo_y0_mm + (py * scale)
                 x_canvas, y_canvas = self.real_to_canvas(x_mm, y_mm)
                 points.append((x_canvas, y_canvas))
-            # Fermer la polyligne si elle n'est pas déjà fermée
             if points[0] != points[-1]:
                 points.append(points[0])
             self.canvas.create_line(points, fill="#888", width=2, tags="logo", smooth=False)
 
     def canvas_to_real(self, x, y):
-        """Convertit les coordonnées du canvas (pixels) en coordonnées réelles (millimètres)."""
+        # Convert canvas coordinates (pixels) to real-world millimeters
         x0, y0, x1, y1 = self.get_zone_coords()
         scale = self._current_scale
         real_x = (x - x0) / scale
-        real_y = (y1 - y) / scale  # Inverser l'axe Y
+        real_y = (y1 - y) / scale
         return real_x, real_y
 
     def real_to_canvas(self, rx, ry):
-        """Convertit les coordonnées réelles (mm) en coordonnées canvas (pixels)."""
+        # Convert real-world millimeters to canvas coordinates (pixels)
         x0, y0, x1, y1 = self.get_zone_coords()
         scale = self._current_scale
         x = x0 + rx * scale
         y = y1 - ry * scale
         return x, y
 
+    # --- Event handlers for drawing and editing ---
     def on_click(self, event):
+        # Handle mouse click for drawing or selecting objects
         tool = self.tool_mode.get()
         self.start_pos = (event.x, event.y)
         if tool == "freehand":
@@ -238,7 +230,6 @@ class PaintEcran:
             dialog = tk.Toplevel(self.root)
             dialog.title("Texte")
             dialog.transient(self.root)
-            # Positionne la fenêtre en haut à gauche
             dialog.geometry("+20+20")
             dialog.wait_visibility()
             dialog.grab_set()
@@ -251,9 +242,8 @@ class PaintEcran:
             size_var = tk.StringVar(value="5")
             size_entry = tk.Entry(dialog, textvariable=size_var, font=("Arial", 22), width=8)
             size_entry.pack(ipadx=10, ipady=5, pady=10)
-            # Clavier virtuel intégré avec navigation entre champs
             is_upper = [False]
-            current_field = [text_entry]  # Pour garder la référence du champ actif
+            current_field = [text_entry]
             def insert_char(c):
                 current_field[0].insert(tk.END, c)
                 current_field[0].focus_set()
@@ -287,28 +277,24 @@ class PaintEcran:
                     if key.isalpha():
                         btn.config(text=key.upper() if is_upper[0] else key.lower(),
                                    command=lambda c=(key.upper() if is_upper[0] else key.lower()): insert_char(c))
-            # Ligne chiffres
             row_frame = tk.Frame(keyboard_frame)
             row_frame.pack()
             for key in number_keys:
                 btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
                 key_buttons.append((btn, key))
-            # Ligne lettres 1
             row_frame = tk.Frame(keyboard_frame)
             row_frame.pack()
             for key in letter_keys[:10]:
                 btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
                 key_buttons.append((btn, key))
-            # Ligne lettres 2
             row_frame = tk.Frame(keyboard_frame)
             row_frame.pack()
             for key in letter_keys[10:20]:
                 btn = tk.Button(row_frame, text=key, width=4, height=2, font=("Arial", 18), command=lambda c=key: insert_char(c))
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
                 key_buttons.append((btn, key))
-            # Ligne lettres 3 + Maj + Effacer + Champ suivant
             row_frame = tk.Frame(keyboard_frame)
             row_frame.pack()
             maj_btn = tk.Button(row_frame, text='Maj', width=5, height=2, font=("Arial", 18), command=toggle_case)
@@ -319,7 +305,6 @@ class PaintEcran:
                 key_buttons.append((btn, key))
             tk.Button(row_frame, text='⌫', width=4, height=2, font=("Arial", 18), command=backspace).pack(side=tk.LEFT, padx=2, pady=2)
             tk.Button(row_frame, text='Champ suivant', width=12, height=2, font=("Arial", 18), command=switch_field).pack(side=tk.LEFT, padx=2, pady=2)
-            # Ligne espace
             row_frame = tk.Frame(keyboard_frame)
             row_frame.pack()
             tk.Button(row_frame, text='Espace', width=20, height=2, font=("Arial", 18), command=space).pack(side=tk.LEFT, padx=2, pady=2)
@@ -358,6 +343,7 @@ class PaintEcran:
             self.select_object(event.x, event.y)
 
     def on_drag(self, event):
+        # Handle mouse drag for drawing or moving objects
         tool = self.tool_mode.get()
         if tool == "freehand" and self.current:
             x1, y1 = self.current[-1]
@@ -381,6 +367,7 @@ class PaintEcran:
             self._drag_data = {'x': event.x, 'y': event.y}
 
     def on_release(self, event):
+        # Handle mouse release to finalize drawing
         tool = self.tool_mode.get()
         if self.start_pos:
             x0, y0 = self.start_pos
@@ -415,13 +402,14 @@ class PaintEcran:
         self.start_pos = None
 
     def select_object(self, x, y):
-        # Désélectionne tout
+        # Select an object under the cursor
+        # Deselect all objects
         for obj in self.objects:
             if obj.type in ("line", "rectangle", "circle", "triangle", "freehand"):
                 self.canvas.itemconfig(obj.canvas_id, width=1, tags="")
             else:
                 self.canvas.itemconfig(obj.canvas_id, tags="")
-        # Zone de tolérance pour écran tactile (20x20 px autour du point)
+        # Tolerance zone for touch screen (20x20 px around the point)
         tolerance = 20
         overlapping = self.canvas.find_overlapping(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
         for obj in reversed(self.objects):
@@ -439,13 +427,16 @@ class PaintEcran:
         self.hide_control_points()
 
     def on_double_click(self, event):
-        # Trouve l'objet sous le curseur
+        # Edit object on double click
+        # Find the object under the cursor
         for obj in self.objects:
             if self.canvas.find_withtag("current") and self.canvas.find_withtag("current")[0] == obj.canvas_id:
                 self.edit_object(obj)
                 break
 
+    # --- Object editing dialogs ---
     def edit_object(self, obj):
+        # Open the appropriate edit dialog for the object type
         if obj.type == "text":
             self.edit_text_object(obj)
         elif obj.type in ("rectangle", "circle"):
@@ -458,6 +449,7 @@ class PaintEcran:
             self.edit_freehand_object(obj)
 
     def edit_text_object(self, obj):
+        # Edit a text object (content, size, position)
         x, y = obj.coords[0]
         dialog = tk.Toplevel(self.root)
         dialog.title("Modifier le texte")
@@ -515,6 +507,7 @@ class PaintEcran:
         dialog.wait_window(dialog)
 
     def edit_rect_or_ellipse(self, obj):
+        # Edit a rectangle or ellipse object
         (x0, y0), (x1, y1) = obj.coords
         dialog = tk.Toplevel(self.root)
         dialog.title("Modifier " + ("rectangle" if obj.type == "rectangle" else "ellipse"))
@@ -558,6 +551,7 @@ class PaintEcran:
         dialog.wait_window(dialog)
 
     def edit_line_object(self, obj):
+        # Edit a line object
         (x0, y0), (x1, y1) = obj.coords
         dialog = tk.Toplevel(self.root)
         dialog.title("Modifier ligne")
@@ -598,6 +592,7 @@ class PaintEcran:
         dialog.wait_window(dialog)
 
     def edit_triangle_object(self, obj):
+        # Edit a triangle object
         (x1, y1), (x2, y2), (x3, y3) = obj.coords
         dialog = tk.Toplevel(self.root)
         dialog.title("Modifier triangle")
@@ -646,7 +641,8 @@ class PaintEcran:
         dialog.wait_window(dialog)
 
     def edit_freehand_object(self, obj):
-        # Permet de déplacer tout le tracé d'un coup
+        # Move a freehand drawing
+        # Allows moving the entire freehand drawing at once
         dialog = tk.Toplevel(self.root)
         dialog.title("Déplacer tracé libre")
         dialog.transient(self.root)
@@ -682,7 +678,9 @@ class PaintEcran:
         tk.Button(dialog, text="OK", command=confirm).pack(pady=5)
         dialog.wait_window(dialog)
 
+    # --- Object management ---
     def delete_selected(self):
+        # Delete the currently selected object
         if self.selected_obj:
             self.canvas.delete(self.selected_obj.canvas_id)
             self.objects.remove(self.selected_obj)
@@ -690,10 +688,10 @@ class PaintEcran:
             self.hide_control_points()
 
     def export_dxf(self):
+        # Export all objects to a DXF file and send to the main PC
         doc = ezdxf.new(dxfversion="R2010")
         msp = doc.modelspace()
 
-        # Offsets en millimètres
         offset_x = 100
         offset_y = 21
 
@@ -712,12 +710,10 @@ class PaintEcran:
                 cx = (x0 + x1) / 2
                 cy = (y0 + y1) / 2
                 angle = getattr(obj, 'angle', 0)
-                angle_rad = math.radians(-angle)  # Inverse le sens de rotation pour le DXF
-                # 4 coins avant rotation
+                angle_rad = math.radians(-angle) 
                 pts = [
                     (x0, y0), (x1, y0), (x1, y1), (x0, y1)
                 ]
-                # Appliquer la rotation
                 rot_pts = [
                     (
                         cx + math.cos(angle_rad) * (px - cx) - math.sin(angle_rad) * (py - cy) + offset_x,
@@ -730,22 +726,18 @@ class PaintEcran:
                 x1, y1 = obj.coords[1]
                 cx = (x0 + x1) / 2
                 cy = (y0 + y1) / 2
-                # Conversion canvas -> réel (mm), inversion axe Y
                 cx_real, cy_real = self.canvas_to_real(cx, cy)
                 rx_canvas = abs(x1 - x0) / 2
                 ry_canvas = abs(y1 - y0) / 2
                 scale = self._current_scale
-                rx = rx_canvas / scale  # en mm
-                ry = ry_canvas / scale  # en mm
+                rx = rx_canvas / scale  
+                ry = ry_canvas / scale 
                 angle = getattr(obj, 'angle', 0)
                 if abs(rx - ry) < 1e-3:
-                    # Cercle
                     msp.add_circle((cx_real + offset_x, cy_real + offset_y), rx)
                 else:
-                    # Ellipse avec rotation (rotation via major_axis)
-                    angle_rad = math.radians(-angle)  # Inverser l'angle pour le repère DXF
+                    angle_rad = math.radians(-angle)
                     if ry > rx:
-                        # DXF: major_axis doit être le plus grand, ratio <= 1
                         major_axis = (ry * math.cos(angle_rad + math.pi/2), ry * math.sin(angle_rad + math.pi/2))
                         ratio = rx / ry if ry != 0 else 1
                     else:
@@ -760,7 +752,6 @@ class PaintEcran:
                 x, y = self.canvas_to_real(*obj.coords[0])
                 height = getattr(obj, "size_mm", 5)
                 fontname = getattr(obj, "font", "DejaVu Sans")
-                # Correction taille : conversion mm -> points
                 size_pt = height / 0.41
                 try:
                     fp = FontProperties(family=fontname, size=size_pt)
@@ -781,7 +772,7 @@ class PaintEcran:
                 except Exception as e:
                     msp.add_text(obj.text, dxfattribs={"height": height, "insert": (x + offset_x, y + offset_y)})
 
-        # Ajout du logo dans le DXF exporté
+        # Add logo to exported DXF
         try:
             logo_doc = ezdxf.readfile(self.logo_dxf_path)
             logo_msp = logo_doc.modelspace()
@@ -801,7 +792,6 @@ class PaintEcran:
                     msp.add_lwpolyline(pts, close=e.closed)
                 elif e.dxftype() == "POLYLINE":
                     pts = [(logo_x0_mm + v.dxf.location.x*scale, logo_y0_mm + v.dxf.location.y*scale) for v in e.vertices]
-                    # Vérifie le flag de fermeture (70)
                     closed = bool(e.dxf.flags & 1)
                     msp.add_lwpolyline(pts, close=closed)
                 elif e.dxftype() == "LINE":
@@ -815,20 +805,13 @@ class PaintEcran:
 
         try:
             doc.saveas("dxf3.dxf")
-            # Suppression des boîtes de dialogue inutiles
-            # messagebox.showinfo("Export", "Fichier 'dxf3.dxf' exporté avec succès.")
-            # Envoi TCP au PC principal
             if self.send_dxf_to_pc("dxf3.dxf", PC_PRINCIPAL_IP, PC_PRINCIPAL_PORT):
-                # Affiche une boîte de dialogue très brève pour signaler l'envoi
                 notif = tk.Toplevel(self.root)
                 notif.title("Envoi")
                 notif.geometry(f"+{self.root.winfo_rootx() + 400}+{self.root.winfo_rooty() + 400}")
                 tk.Label(notif, text="Fichier envoyé à la graveuse !", font=("Arial", 20)).pack(padx=30, pady=30)
-                notif.after(1200, notif.destroy)  # Ferme après 1,2 seconde
-            # else:  # Optionnel : pas de boîte d'erreur, ou tu peux en mettre une si tu veux
-            #     pass
+                notif.after(1200, notif.destroy) 
         except Exception as e:
-            # Affiche une boîte d'erreur uniquement si l'export échoue
             notif = tk.Toplevel(self.root)
             notif.title("Erreur export")
             notif.geometry(f"+{self.root.winfo_rootx() + 400}+{self.root.winfo_rooty() + 400}")
@@ -837,6 +820,7 @@ class PaintEcran:
 
     @staticmethod
     def send_dxf_to_pc(filepath, pc_ip, port=5001):
+        # Send the DXF file to the main PC via TCP
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((pc_ip, port))
@@ -851,30 +835,27 @@ class PaintEcran:
             print(f"Erreur d'envoi TCP : {e}")
             return False
 
-    # Ajout: gestion des points de contrôle pour modification tactile
+    # --- Control points and rotation ---
     def show_control_points(self, obj):
+        # Show control points for resizing/rotating the selected object
         self.hide_control_points()
         self.control_points = []
         import math
-        # On ne met plus de poignée de rotation pour le texte
+        # Rectangle, circle, line, triangle get rotation handle
         if obj.type in ("rectangle", "circle", "line", "triangle"):
             cx, cy = self.get_object_center(obj)
             angle_rad = math.radians(getattr(obj, 'angle', 0))
-            # Poignée de rotation (au-dessus du centre supérieur, après rotation)
             if obj.type == "rectangle" or obj.type == "circle":
                 (x0, y0), (x1, y1) = obj.coords
-                # Coins du rectangle avant rotation
                 pts = [
                     (x0, y0), (x1, y0), (x1, y1), (x0, y1)
                 ]
-                # Appliquer la rotation aux coins
                 rot_pts = [
                     (
                         cx + math.cos(angle_rad) * (px - cx) - math.sin(angle_rad) * (py - cy),
                         cy + math.sin(angle_rad) * (px - cx) + math.cos(angle_rad) * (py - cy)
                     ) for (px, py) in pts
                 ]
-                # Poignée de rotation (au-dessus du centre supérieur, après rotation)
                 top_mid = (
                     (rot_pts[0][0] + rot_pts[1][0]) / 2,
                     (rot_pts[0][1] + rot_pts[1][1]) / 2
@@ -890,9 +871,7 @@ class PaintEcran:
                 rot_y = top_mid[1] + (dx) * 30
             elif obj.type == "line":
                 (x0, y0), (x1, y1) = obj.coords
-                # Milieu de la ligne
                 top_mid = ((x0 + x1) / 2, (y0 + y1) / 2)
-                # Décalage vertical (30 px dans la direction perpendiculaire à la ligne)
                 dx = x1 - x0
                 dy = y1 - y0
                 norm = math.hypot(dx, dy)
@@ -900,14 +879,12 @@ class PaintEcran:
                     norm = 1
                 dx /= norm
                 dy /= norm
-                # Perpendiculaire
                 perp_x = -dy
                 perp_y = dx
                 rot_x = top_mid[0] + perp_x * 30
                 rot_y = top_mid[1] + perp_y * 30
             elif obj.type == "triangle":
                 pts = obj.coords
-                # Milieu du segment [0]-[1]
                 top_mid = ((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2)
                 dx = top_mid[0] - cx
                 dy = top_mid[1] - cy
@@ -927,6 +904,7 @@ class PaintEcran:
             self.control_points.append(rot_cp)
 
     def start_rotate_control_point(self, event, obj):
+        # Start rotating the selected object
         self._rotating_obj = obj
         self._rotate_origin = self.get_object_center(obj)
         self._rotate_start_angle = obj.angle
@@ -935,11 +913,10 @@ class PaintEcran:
         self.canvas.bind('<ButtonRelease-1>', self.stop_rotate_control_point)
 
     def rotate_control_point(self, event):
+        # Rotate the selected object based on mouse movement
         obj = self._rotating_obj
         ox, oy = self._rotate_origin
         x0, y0 = self._rotate_start_mouse
-        # Angle initial
-        import math
         a0 = math.atan2(y0 - oy, x0 - ox)
         a1 = math.atan2(event.y - oy, event.x - ox)
         delta_deg = math.degrees(a1 - a0)
@@ -948,13 +925,14 @@ class PaintEcran:
         self.show_control_points(obj)
 
     def stop_rotate_control_point(self, event):
+        # Stop rotating and restore normal bindings
         self.canvas.unbind('<B1-Motion>')
         self.canvas.unbind('<ButtonRelease-1>')
         self._rotating_obj = None
         self._rotate_origin = None
         self._rotate_start_angle = None
         self._rotate_start_mouse = None
-        # Correction : on réactive tous les bindings pour permettre de dessiner n'importe quel objet
+        # Restore all event bindings after rotation
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -962,6 +940,7 @@ class PaintEcran:
         self.canvas.focus_set()
 
     def get_object_center(self, obj):
+        # Get the center point of an object
         if obj.type in ("rectangle", "circle"):
             (x0, y0), (x1, y1) = obj.coords
             return ((x0 + x1) / 2, (y0 + y1) / 2)
@@ -978,6 +957,7 @@ class PaintEcran:
         return (0, 0)
 
     def redraw_object_with_rotation(self, obj):
+        # Redraw an object with its current rotation
         self.canvas.delete(obj.canvas_id)
         import math
         if obj.type == "rectangle":
@@ -1001,10 +981,10 @@ class PaintEcran:
             ry = abs(y1 - y0) / 2
             angle = getattr(obj, 'angle', 0)
             if abs(rx - ry) < 1e-2:
-                # Cercle parfait : pas de rotation visuelle
+                # Perfect circle: no visible rotation
                 obj.canvas_id = self.canvas.create_oval(x0, y0, x1, y1, outline="blue")
             else:
-                # Ellipse : dessiner comme un polygone approché avec rotation
+                # Ellipse: draw as polygon with rotation
                 points = []
                 steps = 60
                 for i in range(steps):
@@ -1050,33 +1030,27 @@ class PaintEcran:
             obj.canvas_id = self.canvas.create_text(x, y, text=obj.text, font=(font, int(size_mm * 10)), anchor="nw")
 
     def hide_control_points(self):
+        # Remove all control points from the canvas
         if hasattr(self, 'control_points'):
             for cp in self.control_points:
                 self.canvas.delete(cp)
             self.control_points = []
 
-    def start_drag_control_point(self, event, obj, idx):
-        pass  # Désactivé : plus de redimensionnement
-
-    def drag_control_point(self, event):
-        pass  # Désactivé : plus de redimensionnement
-
-    def stop_drag_control_point(self, event):
-        pass  # Désactivé : plus de redimensionnement
-
-    # Calcule la taille en pixels pour obtenir la bonne hauteur en mm
+    # --- Font size utility ---
     def mm_to_tk_font_size(self, size_mm):
-        # 1. Crée un texte temporaire
+        # Convert font size in mm to a suitable Tkinter font size (pixels)
         test_id = self.canvas.create_text(0, 0, text="Hg", font=("DejaVu Sans", int(size_mm * self._current_scale)), anchor="nw")
         bbox = self.canvas.bbox(test_id)
         height_px = bbox[3] - bbox[1]
         self.canvas.delete(test_id)
-        # 2. Calcule le coefficient correctif
+        # Calculate correction factor for font size
         target_height_px = size_mm * self._current_scale
         correction = target_height_px / height_px if height_px else 1
         return int(size_mm * self._current_scale * correction)
 
+    # --- Fullscreen toggle ---
     def toggle_fullscreen(self):
+        # Toggle fullscreen mode for the application
         is_fullscreen = self.root.attributes('-fullscreen')
         self.root.attributes('-fullscreen', not is_fullscreen)
 
